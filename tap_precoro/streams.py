@@ -102,28 +102,25 @@ class InvoicesStream(TransactionsStream):
     primary_keys = ["id"]
     replication_key = "updateDate"
     export_conditions = None
-
-    def __init__(self, *args, **kwargs):
-        """Initialize the stream."""
-        super().__init__(*args, **kwargs)
-        self._processed_idns = set()
     
     def get_child_context(self, record: dict, context: Optional[dict]) -> dict:
         """Return a context dictionary for child streams."""
         return {
             "invoice_id": record["idn"],
         }
-
-    def parse_response(self, response: requests.Response) -> Iterable[dict]:
-        """Parse the response and filter out duplicate invoices by idn."""
-        for record in extract_jsonpath(self.records_jsonpath, input=response.json()):
-            idn = record.get("idn")
-            if idn and idn not in self._processed_idns:
-                self._processed_idns.add(idn)
-                yield record
     
     def post_process(self, row, context):
         row = super().post_process(row, context)
+        
+        # Filter by splitIndex: only keep invoices where splitIndex is 0 or 10
+        # 0 - Single document without split-cost logic
+        # 10 - Main part of invoice with split-cost logic
+        split_index = row.get("splitIndex")
+        if split_index not in (0, 10):
+            self.logger.info(
+                f"Invoice with id {row['id']} skipped because splitIndex: '{split_index}' is not 0 or 10"
+            )
+            return None
         
         if self.export_conditions is None:
             export_conditions = []
