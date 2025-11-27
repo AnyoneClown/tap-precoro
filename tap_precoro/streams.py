@@ -116,7 +116,7 @@ class InvoicesStream(TransactionsStream):
         # 0 - Single document without split-cost logic
         # 10 - Main part of invoice with split-cost logic
         split_index = row.get("splitIndex")
-        if split_index not in (0, 10):
+        if split_index and split_index not in (0, 10):
             self.logger.info(
                 f"Invoice with id {row['id']} skipped because splitIndex: '{split_index}' is not 0 or 10"
             )
