@@ -1,14 +1,15 @@
 """Stream type classes for tap-precoro."""
 
-from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, Optional, Union, List, Iterable
-from singer_sdk import typing as th  # JSON Schema typing helpers
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Union
+
+import requests
 from pendulum import parse
+from singer_sdk import typing as th  # JSON Schema typing helpers
+from singer_sdk.helpers.jsonpath import extract_jsonpath
 
 from tap_precoro.client import PrecoroStream
-from singer_sdk.helpers.jsonpath import extract_jsonpath
-import requests
 
 
 class TaxesStream(PrecoroStream):
@@ -42,7 +43,6 @@ class TransactionsStream(PrecoroStream):
         th.Property("statusString", th.StringType),
     ).to_dict()
 
-
     def get_approval_date(self) -> Optional[datetime]:
         approval_date = self.config.get("approval_date")
         if not approval_date:
@@ -52,7 +52,7 @@ class TransactionsStream(PrecoroStream):
         except (ValueError, TypeError):
             self.logger.warning(f"Invalid approval date format: {approval_date!r}")
             return None
-    
+
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
 
@@ -67,7 +67,7 @@ class TransactionsStream(PrecoroStream):
             "awaiting_confirmation": 6,
             "on_revise": 7,
             "canceled": 8,
-            "pending_receipt": 9 
+            "pending_receipt": 9,
         }
         statuses = self.config.get("statuses")
 
@@ -88,10 +88,9 @@ class TransactionsStream(PrecoroStream):
         # Add approval date filtering
         approval_date = self.get_approval_date()
         if approval_date:
-            params["approvalLeftDate"] = approval_date.strftime('%Y-%m-%dT%H:%M:%S')
+            params["approvalLeftDate"] = approval_date.strftime("%Y-%m-%dT%H:%M:%S")
 
         return params
-
 
 
 class InvoicesStream(TransactionsStream):
@@ -102,24 +101,22 @@ class InvoicesStream(TransactionsStream):
     primary_keys = ["id"]
     replication_key = "updateDate"
     export_conditions = None
-    
+
     def get_child_context(self, record: dict, context: Optional[dict]) -> dict:
         """Return a context dictionary for child streams."""
         return {
             "invoice_id": record["idn"],
         }
-    
+
     def post_process(self, row, context):
         row = super().post_process(row, context)
-        
+
         # Filter by perantIdn: only keep invoices where there are no parentIdn
         parent_idn = row.get("parentIdn")
         if parent_idn:
-            self.logger.info(
-                f"Invoice with id {row['id']} skipped because parenIdn: '{parent_idn}'"
-            )
+            self.logger.info(f"Invoice with id {row['id']}, skipped because parenIdn: '{parent_idn}'")
             return None
-        
+
         if self.export_conditions is None:
             export_conditions = []
 
@@ -127,40 +124,37 @@ class InvoicesStream(TransactionsStream):
             new_format_conditions = self.config.get("export_condition", [])
             if new_format_conditions:
                 export_conditions = new_format_conditions
-                
-            # Check for old format: "exportOptions.export_condition" (single object) 
+
+            # Check for old format: "exportOptions.export_condition" (single object)
             old_format_condition = self.config.get("exportOptions", {}).get("export_condition")
             if old_format_condition and not export_conditions:
                 export_conditions = [old_format_condition]
-            
+
             if export_conditions:
                 self.logger.info("Export conditions found in config file, filtering invoices...")
                 self.export_conditions = []
                 for condition in export_conditions:
                     try:
-                        self.export_conditions.append({
-                            "id": int(condition.get("id")),
-                            "value": str(condition.get("value"))
-                        })
+                        self.export_conditions.append(
+                            {"id": int(condition.get("id")), "value": str(condition.get("value"))}
+                        )
                     except Exception as e:
                         raise Exception(f"Error while processing export condition: {e}")
             else:
                 self.export_conditions = []
-        
+
         if self.export_conditions:
             record_dcf = row.get("dataDocumentCustomFields", {}).get("data", [])
             for condition in self.export_conditions:
                 record_dcf_ec = [
-                    dcf
-                    for dcf in record_dcf
-                    if dcf.get("documentCustomField", {}).get("id") == condition["id"]
+                    dcf for dcf in record_dcf if dcf.get("documentCustomField", {}).get("id") == condition["id"]
                 ]
                 if not record_dcf_ec or record_dcf_ec[0].get("value") != condition["value"]:
                     self.logger.debug(
                         f"Invoice with id {row['id']} skipped because it didn't match export condition with id {condition['id']}"
                     )
                     return None
-        
+
         return row
 
 
@@ -188,12 +182,8 @@ class InvoiceDetailsStream(PrecoroStream):
         th.Property("sumPaidInCompanyCurrency", th.CustomType({"type": ["number", "string"]})),
         th.Property("sum", th.CustomType({"type": ["number", "string"]})),
         th.Property("netSum", th.CustomType({"type": ["number", "string"]})),
-        th.Property(
-            "sumInCompanyCurrency", th.CustomType({"type": ["number", "string"]})
-        ),
-        th.Property(
-            "netSumInCompanyCurrency", th.CustomType({"type": ["number", "string"]})
-        ),
+        th.Property("sumInCompanyCurrency", th.CustomType({"type": ["number", "string"]})),
+        th.Property("netSumInCompanyCurrency", th.CustomType({"type": ["number", "string"]})),
         th.Property("withholdingTaxSum", th.CustomType({"type": ["number", "string"]})),
         th.Property("currency", th.StringType),
         th.Property("precisionData", th.CustomType({"type": ["object", "string"]})),
@@ -208,9 +198,7 @@ class InvoiceDetailsStream(PrecoroStream):
         th.Property("toleranceRatePercent", th.StringType),
         th.Property("purchaseOrder", th.CustomType({"type": ["array", "object"]})),
         th.Property("prepaymentPercent", th.CustomType({"type": ["number", "string"]})),
-        th.Property(
-            "postpaymentPercent", th.CustomType({"type": ["number", "string"]})
-        ),
+        th.Property("postpaymentPercent", th.CustomType({"type": ["number", "string"]})),
         th.Property("creditPeriodDays", th.NumberType),
         th.Property("approvalStep", th.CustomType({"type": ["object", "string"]})),
         th.Property("paymentTerm", th.CustomType({"type": ["object", "string"]})),
@@ -238,9 +226,7 @@ class InvoiceDetailsStream(PrecoroStream):
         th.Property("comments", th.CustomType({"type": ["object", "array"]})),
         th.Property("payments", th.CustomType({"type": ["object", "array"]})),
         th.Property("followers", th.CustomType({"type": ["object", "array"]})),
-        th.Property(
-            "dataDocumentCustomFields", th.CustomType({"type": ["object", "array"]})
-        ),
+        th.Property("dataDocumentCustomFields", th.CustomType({"type": ["object", "array"]})),
         th.Property("attachments", th.CustomType({"type": ["object", "array"]})),
         th.Property("allocatedInvoice", th.CustomType({"type": ["object", "array"]})),
         th.Property("contracts", th.CustomType({"type": ["object", "array"]})),
@@ -296,45 +282,69 @@ class SuppliersStream(PrecoroStream):
         th.Property("qboId", th.StringType),
         th.Property("externalId", th.CustomType({"type": ["number", "string"]})),
         th.Property("xeroId", th.StringType),
-        th.Property("marketSupplier", th.ObjectType(
-            th.Property("id", th.IntegerType),    
-        )),
+        th.Property(
+            "marketSupplier",
+            th.ObjectType(
+                th.Property("id", th.IntegerType),
+            ),
+        ),
         th.Property("enableMarketSupplier", th.BooleanType),
         th.Property("creditBalanceSums", th.CustomType({"type": ["object", "array"]})),
         th.Property("afaxysSupplierId", th.StringType),
         th.Property("status", th.IntegerType),
-        th.Property("creator", th.ObjectType(
-            th.Property("id", th.IntegerType),    
-        )),
+        th.Property(
+            "creator",
+            th.ObjectType(
+                th.Property("id", th.IntegerType),
+            ),
+        ),
         th.Property("enterInvoiceAsOneLine", th.BooleanType),
-        th.Property("paymentTerms", th.ObjectType(
-            th.Property("data", th.ArrayType(
-                th.ObjectType(
-                    th.Property("id", th.NumberType),
-                    th.Property("name", th.StringType),
-                    th.Property("prepaymentPercent", th.NumberType),
-                    th.Property("postpaymentPercent", th.NumberType),
-                    th.Property("creditPeriodDays", th.NumberType),
-                    th.Property("paymentType", th.NumberType),
-                    th.Property("enable", th.BooleanType),
-                )
-            )),
-        )),
-        th.Property("approvalSteps", th.ObjectType(
-           th.Property("data", th.ArrayType(th.CustomType({"type": ["object", "array"]}))), 
-        )),
+        th.Property(
+            "paymentTerms",
+            th.ObjectType(
+                th.Property(
+                    "data",
+                    th.ArrayType(
+                        th.ObjectType(
+                            th.Property("id", th.NumberType),
+                            th.Property("name", th.StringType),
+                            th.Property("prepaymentPercent", th.NumberType),
+                            th.Property("postpaymentPercent", th.NumberType),
+                            th.Property("creditPeriodDays", th.NumberType),
+                            th.Property("paymentType", th.NumberType),
+                            th.Property("enable", th.BooleanType),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        th.Property(
+            "approvalSteps",
+            th.ObjectType(
+                th.Property("data", th.ArrayType(th.CustomType({"type": ["object", "array"]}))),
+            ),
+        ),
         th.Property("approvingWay", th.CustomType({"type": ["object", "array", "string"]})),
-        th.Property("contacts", th.ObjectType(
-           th.Property("data", th.ArrayType(th.CustomType({"type": ["object", "array"]}))), 
-        )),
-        th.Property("marketContacts", th.ObjectType(
-           th.Property("data", th.ArrayType(th.CustomType({"type": ["object", "array", "string"]}))), 
-        )),
+        th.Property(
+            "contacts",
+            th.ObjectType(
+                th.Property("data", th.ArrayType(th.CustomType({"type": ["object", "array"]}))),
+            ),
+        ),
+        th.Property(
+            "marketContacts",
+            th.ObjectType(
+                th.Property("data", th.ArrayType(th.CustomType({"type": ["object", "array", "string"]}))),
+            ),
+        ),
         th.Property("supplierRegistration", th.CustomType({"type": ["object", "array", "string"]})),
-        th.Property("approvalInfo", th.ObjectType(
-            th.Property("canApprove", th.BooleanType),
-            th.Property("canReject", th.BooleanType),
-        )),
+        th.Property(
+            "approvalInfo",
+            th.ObjectType(
+                th.Property("canApprove", th.BooleanType),
+                th.Property("canReject", th.BooleanType),
+            ),
+        ),
         th.Property("dataSupplierCustomFields", th.CustomType({"type": ["object", "string"]})),
     ).to_dict()
 
@@ -349,14 +359,8 @@ class SuppliersStream(PrecoroStream):
             # Fetch invoices with statuses in config statuses flag
             statuses = supplier_status.split(",")
             statuses = [status.strip() for status in statuses]
-            self.logger.info(
-                f"Status flag found in config file fetching suppliers with status in {statuses}."
-            )
-            statuses = [
-                sup_status_map.get(status.lower())
-                for status in statuses
-                if status in sup_status_map
-            ]
+            self.logger.info(f"Status flag found in config file fetching suppliers with status in {statuses}.")
+            statuses = [sup_status_map.get(status.lower()) for status in statuses if status in sup_status_map]
             params["status[]"] = statuses
 
         return params
@@ -384,9 +388,7 @@ class ItemsStream(PrecoroStream):
         th.Property("supplier", th.CustomType({"type": ["object", "array"]})),
         th.Property("similar", th.CustomType({"type": ["object", "array"]})),
         th.Property("marketProduct", th.CustomType({"type": ["object", "array"]})),
-        th.Property(
-            "dataProductCustomFields", th.CustomType({"type": ["object", "array"]})
-        ),
+        th.Property("dataProductCustomFields", th.CustomType({"type": ["object", "array"]})),
         th.Property("bundleItems", th.CustomType({"type": ["object", "array"]})),
         th.Property("groupItems", th.CustomType({"type": ["object", "array"]})),
         th.Property("typeString", th.StringType),
@@ -434,10 +436,8 @@ class ExpensesDetailsStream(PrecoroStream):
         th.Property("sumPaidInCompanyCurrency", th.NumberType),
         th.Property("sum", th.NumberType),
         th.Property("netSum", th.NumberType),
-        th.Property(
-            "sumInCompanyCurrency", th.NumberType),
-        th.Property(
-            "netSumInCompanyCurrency", th.NumberType),
+        th.Property("sumInCompanyCurrency", th.NumberType),
+        th.Property("netSumInCompanyCurrency", th.NumberType),
         th.Property("withholdingTaxSum", th.NumberType),
         th.Property("currency", th.StringType),
         th.Property("precisionData", th.CustomType({"type": ["object", "string"]})),
@@ -461,9 +461,83 @@ class ExpensesDetailsStream(PrecoroStream):
         th.Property("comments", th.CustomType({"type": ["object", "array"]})),
         th.Property("expensePayments", th.CustomType({"type": ["object", "array"]})),
         th.Property("followers", th.CustomType({"type": ["object", "array"]})),
-        th.Property(
-            "dataDocumentCustomFields", th.CustomType({"type": ["object", "array"]})
-        ),
+        th.Property("dataDocumentCustomFields", th.CustomType({"type": ["object", "array"]})),
         th.Property("attachments", th.CustomType({"type": ["object", "array"]})),
         th.Property("isBudgetOverLimit", th.BooleanType),
+    ).to_dict()
+
+
+class ItemCustomFieldsStream(PrecoroStream):
+    """Define custom stream."""
+
+    name = "item_custom_fields"
+    path = "/itemcustomfields"
+    primary_keys = ["id"]
+    replication_key = "updateDate"
+
+    schema = th.PropertiesList(
+        th.Property("id", th.IntegerType),
+        th.Property("createDate", th.DateTimeType),
+        th.Property("updateDate", th.DateTimeType),
+        th.Property("name", th.StringType),
+        th.Property("description", th.StringType),
+        th.Property("required", th.BooleanType),
+        th.Property("enable", th.BooleanType),
+        th.Property("type", th.IntegerType),
+        th.Property("unload", th.BooleanType),
+        th.Property("printCode", th.BooleanType),
+        th.Property("printName", th.BooleanType),
+        th.Property("position", th.IntegerType),
+        th.Property("useCodeInDocuments", th.BooleanType),
+        th.Property("sortingFormat", th.IntegerType),
+        th.Property("enableWarehouseRequest", th.BooleanType),
+        th.Property("enablePurchaseRequisition", th.BooleanType),
+        th.Property("enablePurchaseOrder", th.BooleanType),
+        th.Property("enableReceipt", th.BooleanType),
+        th.Property("enableInvoice", th.BooleanType),
+        th.Property("enableExpense", th.BooleanType),
+        th.Property("enableProducts", th.BooleanType),
+        th.Property("availableInBudgets", th.BooleanType),
+        th.Property("enableRequestForProposal", th.BooleanType),
+        th.Property("enableInventoryConsumption", th.BooleanType),
+        th.Property("isQuickbooksMarkupField", th.BooleanType),
+        th.Property("options", th.CustomType({"type": ["object", "array"]})),
+    ).to_dict()
+
+
+class DocumentCustomFieldsStream(PrecoroStream):
+    """Define custom stream."""
+
+    name = "document_custom_fields"
+    path = "/documentcustomfields"
+    primary_keys = ["id"]
+    replication_key = "updateDate"
+
+    schema = th.PropertiesList(
+        th.Property("id", th.IntegerType),
+        th.Property("createDate", th.DateTimeType),
+        th.Property("updateDate", th.DateTimeType),
+        th.Property("name", th.StringType),
+        th.Property("description", th.StringType),
+        th.Property("required", th.BooleanType),
+        th.Property("enable", th.BooleanType),
+        th.Property("type", th.IntegerType),
+        th.Property("unload", th.BooleanType),
+        th.Property("position", th.IntegerType),
+        th.Property("useCodeInDocuments", th.BooleanType),
+        th.Property("enableWarehouseRequest", th.BooleanType),
+        th.Property("enablePurchaseRequisition", th.BooleanType),
+        th.Property("enableRequestForProposal", th.BooleanType),
+        th.Property("enableInventoryConsumption", th.BooleanType),
+        th.Property("enablePurchaseOrder", th.BooleanType),
+        th.Property("enableReceipt", th.BooleanType),
+        th.Property("enableInvoice", th.BooleanType),
+        th.Property("enableExpense", th.BooleanType),
+        th.Property("sortingFormat", th.IntegerType),
+        th.Property("availableInBudgets", th.BooleanType),
+        th.Property("availableInApprovalWorkflow", th.BooleanType),
+        th.Property("displayInTheList", th.BooleanType),
+        th.Property("limitAccessToDocuments", th.BooleanType),
+        th.Property("allUsersAccess", th.BooleanType),
+        th.Property("options", th.CustomType({"type": ["object", "array"]})),
     ).to_dict()
