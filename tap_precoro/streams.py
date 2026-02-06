@@ -468,7 +468,7 @@ class ExpensesDetailsStream(PrecoroStream):
 
 
 class ItemCustomFieldsStream(PrecoroStream):
-    """Define custom stream."""
+    """Parent stream for Item Custom Fields metadata (excludes options)."""
 
     name = "item_custom_fields"
     path = "/itemcustomfields"
@@ -501,12 +501,67 @@ class ItemCustomFieldsStream(PrecoroStream):
         th.Property("enableRequestForProposal", th.BooleanType),
         th.Property("enableInventoryConsumption", th.BooleanType),
         th.Property("isQuickbooksMarkupField", th.BooleanType),
-        th.Property("options", th.CustomType({"type": ["object", "array"]})),
     ).to_dict()
 
 
+class ItemCustomFieldOptionsStream(PrecoroStream):
+    """Child stream for flattened Item Custom Field Options."""
+
+    name = "item_custom_field_options"
+    path = "/itemcustomfields"
+    primary_keys = ["id"]
+    replication_key = "parent_update_date"
+
+    schema = th.PropertiesList(
+        th.Property("id", th.IntegerType),
+        th.Property("item_custom_field_id", th.IntegerType),
+        th.Property("name", th.StringType),
+        th.Property("code", th.StringType),
+        th.Property("label", th.StringType),
+        th.Property("level", th.IntegerType),
+        th.Property("parent_option_id", th.IntegerType),
+        th.Property("netSuiteId", th.StringType),
+        th.Property("externalId", th.StringType),
+        th.Property("enable", th.BooleanType),
+        th.Property("parent_update_date", th.DateTimeType),
+    ).to_dict()
+
+    def parse_response(self, response: requests.Response) -> Iterable[dict]:
+        """Iterate through parents to extract and yield options."""
+        resp_json = response.json()
+        
+        records = resp_json.get("data", []) if isinstance(resp_json, dict) else resp_json
+
+        for parent in records:
+            parent_id = parent.get("id")
+            parent_date = parent.get("updateDate")
+            
+            # Extract the nested options list
+            options_data = parent.get("options", {}).get("data", [])
+
+            for option in options_data:
+                # Get the nested parent ID
+                nested_parent = option.get("parent")
+                nested_parent_id = nested_parent.get("id") if isinstance(nested_parent, dict) else None
+
+                yield {
+                    "id": option.get("id"),
+                    "item_custom_field_id": parent_id,
+                    "name": option.get("name"),
+                    "code": option.get("code"),
+                    "label": option.get("label"),
+                    "level": option.get("level"),
+                    "parent_option_id": nested_parent_id,
+                    "netSuiteId": str(option.get("netSuiteId")) if option.get("netSuiteId") is not None else None,
+                    "externalId": str(option.get("externalId")) if option.get("externalId") is not None else None,
+                    "enable": option.get("enable"),
+                    "parent_update_date": parent_date
+                }
+
+
+
 class DocumentCustomFieldsStream(PrecoroStream):
-    """Define custom stream."""
+    """Parent stream for Document Custom Fields metadata (excludes options)."""
 
     name = "document_custom_fields"
     path = "/documentcustomfields"
@@ -539,5 +594,54 @@ class DocumentCustomFieldsStream(PrecoroStream):
         th.Property("displayInTheList", th.BooleanType),
         th.Property("limitAccessToDocuments", th.BooleanType),
         th.Property("allUsersAccess", th.BooleanType),
-        th.Property("options", th.CustomType({"type": ["object", "array"]})),
     ).to_dict()
+
+
+class DocumentCustomFieldOptionsStream(PrecoroStream):
+    """Child stream for flattened Document Custom Field Options."""
+
+    name = "document_custom_field_options"
+    path = "/documentcustomfields"
+    primary_keys = ["id"]
+    replication_key = "parent_update_date"
+
+    schema = th.PropertiesList(
+        th.Property("id", th.IntegerType),
+        th.Property("document_custom_field_id", th.IntegerType),
+        th.Property("name", th.StringType),
+        th.Property("code", th.StringType),
+        th.Property("label", th.StringType),
+        th.Property("level", th.IntegerType),
+        th.Property("parent_option_id", th.IntegerType),
+        th.Property("enable", th.BooleanType),
+        th.Property("externalId", th.StringType),
+        th.Property("parent_update_date", th.DateTimeType),
+    ).to_dict()
+
+    def parse_response(self, response: requests.Response) -> Iterable[dict]:
+        """Iterate through parents to extract and yield options."""
+        resp_json = response.json()
+        records = resp_json.get("data", []) if isinstance(resp_json, dict) else resp_json
+
+        for parent in records:
+            parent_id = parent.get("id")
+            parent_date = parent.get("updateDate")
+            
+            options_data = parent.get("options", {}).get("data", [])
+
+            for option in options_data:
+                nested_parent = option.get("parent")
+                nested_parent_id = nested_parent.get("id") if isinstance(nested_parent, dict) else None
+
+                yield {
+                    "id": option.get("id"),
+                    "document_custom_field_id": parent_id,
+                    "name": option.get("name"),
+                    "code": option.get("code"),
+                    "label": option.get("label"),
+                    "level": option.get("level"),
+                    "parent_option_id": nested_parent_id,
+                    "enable": option.get("enable"),
+                    "externalId": str(option.get("externalId")) if option.get("externalId") is not None else None,
+                    "parent_update_date": parent_date
+                }

@@ -14,7 +14,9 @@ from tap_precoro.streams import (
     ExpensesStream,
     ExpensesDetailsStream,
     ItemCustomFieldsStream,
-    DocumentCustomFieldsStream
+    DocumentCustomFieldsStream,
+    ItemCustomFieldOptionsStream,
+    DocumentCustomFieldOptionsStream
 )
 
 STREAM_TYPES = [
@@ -26,7 +28,9 @@ STREAM_TYPES = [
     ExpensesStream,
     ExpensesDetailsStream,
     ItemCustomFieldsStream,
-    DocumentCustomFieldsStream
+    DocumentCustomFieldsStream,
+    ItemCustomFieldOptionsStream,
+    DocumentCustomFieldOptionsStream
 ]
 
 
